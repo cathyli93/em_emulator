@@ -20,7 +20,7 @@ import copy
 
 import pickle
 
-__all__ = ["MobilityMngt2"]
+__all__ = ["MobilityMngt3"]
 
 import time
 import datetime
@@ -35,7 +35,7 @@ def string2timestamp(s):
     # return time.mktime(s.timetuple()) + s.microsecond / 1000000.0
 
 
-class MobilityMngt2(Analyzer):
+class MobilityMngt3(Analyzer):
     """
     A function analyzer that models mobility management.
     It offers two functions
@@ -64,6 +64,15 @@ class MobilityMngt2(Analyzer):
         self.__b_prediction = False  # handoff prediction is disabled by default
         self.__predict_target = None  # predicted target cell
 
+        # mobility profile
+        self.__execution_failure = False
+
+        self.__current_freq = None
+        self.__current_cid = None
+
+        self.__last_measure = None
+        self.__handover_ongoing = None
+
         self.add_source_callback(self.__filter)
 
         # include analyzers
@@ -82,6 +91,7 @@ class MobilityMngt2(Analyzer):
         Analyzer.set_source(self,source)
 
         source.enable_log("LTE_RRC_OTA_Packet")
+        source.enable_log("LTE_PHY_Serv_Cell_Measurement")
 
     def __filter(self, event):
         log_item = event.data.decode()
@@ -89,6 +99,16 @@ class MobilityMngt2(Analyzer):
 
         if event.type_id == "LTE_RRC_OTA_Packet":
             self.__on_lte_rrc_msg(decoded_event)
+
+        if event.type_id == "LTE_PHY_Serv_Cell_Measurement":
+            self.__serv_cell_meas(log_item)
+
+    def __serv_cell_meas(self, decoded):
+        for element in decoded['Subpackets']:
+            if element['Serving Cell Index'] == 'PCell' and element['Is Serving Cell'] == 1 and element['E-ARFCN'] == self.__current_freq and element['Physical Cell ID'] == self.__current_cid:
+                self.__last_measure = decoded['timestamp']
+                break
+            # self.__last_measure = (log_item['timestamp'], log_item['E-ARFCN'], log_item['Physical Cell ID'])
 
     def print_mobility_policy(self):
         """
@@ -163,21 +183,45 @@ class MobilityMngt2(Analyzer):
         for field in log_xml.iter('field'):
             if field.get('name') == "lte-rrc.rrcConnectionSetup_element":
                 self.__handoff_sample = HandoffSample()
+                self.__current_freq = cur_freq
+                self.__current_cid = cur_cellid
+                self.__execution_failure = False
+                self.__handover_ongoing = None
+
+                print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
+                              "," + "Connection setup" + "," + str(cur_freq) + "," + str(cur_cellid))
 
             if field.get('name') == "lte-rrc.rrcConnectionReestablishmentRequest_element":
                 # <field name="lte-rrc.reestablishmentCause" pos="13" show="1" showname="reestablishmentCause: handoverFailure (1)" size="1" value="04" />
                 self.__handoff_sample = HandoffSample()
 
-                tag = 'failure'
                 for val in field.iter('field'):
                     if val.get('name') == 'lte-rrc.reestablishmentCause':
                         if int(val.get('show')) == 1:
-                            tag = 'handover_failure'
+                            self.__execution_failure = True
                         break
 
-                print ("[rrc]:" + str(string2timestamp(log_item['timestamp'])) + 
-                              ",Reestablish with," + 
-                              str(cur_freq) + "," + str(cur_cellid) + ',' + tag)
+            if field.get("name") == "lte-rrc.rrcConnectionReestablishmentComplete_element":
+                tag = 'Handover failure'
+                if self.__execution_failure:
+                    tag = 'Reestablish'
+                print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
+                              "," + tag + "," + str(cur_freq) + "," + str(cur_cellid) + "," + str(string2timestamp(self.__last_measure)))
+
+                self.__current_freq = cur_freq
+                self.__current_cid = cur_cellid
+                self.__execution_failure = False
+                self.__handover_ongoing = None
+
+            if field.get("name") == "lte-rrc.rrcConnectionReconfigurationComplete_element":
+                if self.__handover_ongoing:
+                    print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
+                        ",Handover," + str(self.__handover_ongoing[0]) + "," + str(self.__handover_ongoing[1]) + "," + str(cur_freq) + "," + str(cur_cellid) + "," + str(string2timestamp(self.__handover_ongoing[2])))
+
+                self.__current_freq = cur_freq
+                self.__current_cid = cur_cellid
+                self.__execution_failure = False
+                self.__handover_ongoing = None
 
             if field.get('name') == "lte-rrc.mobilityControlInfo_element":
                 # A handoff command: create a new HandoffState
@@ -205,15 +249,10 @@ class MobilityMngt2(Analyzer):
                     # Reset handoff sample
                     self.__handoff_sample = HandoffSample()
 
-                    # self.log_info(str(string2timestamp(log_item['timestamp'])) +
-                    #               " Handoff to " + handoff_state.dump())
-                    # self.log_info(str(string2timestamp(log_item['timestamp'])) + 
-                    #               ",Handoff from," + str(cur_freq) + "," + str(cur_cellid) +
-                    #               ",Handoff to," + str(handoff_state.freq))
-                    print ("[rrc]:" + str(string2timestamp(log_item['timestamp'])) + 
-                                  ",Handoff," + str(cur_freq) + "," + str(cur_cellid) +
-                                  "," + str(handoff_state.freq) + "," + str(qr_target_cell_id) + ',' +
-                                  str(msg_len))
+                    self.__handover_ongoing = (cur_freq, cur_cellid, log_item['timestamp'])
+
+                    # self.__current_freq = cur_freq
+                    # self.__current_cid = cur_cellid
 
                     # Broadcast to apps
                     bcast_dict = {}
@@ -316,21 +355,13 @@ class MobilityMngt2(Analyzer):
                         break
 
             if field.get('name') == "lte-rrc.measurementReport_element":
-                # A measurement report: parse it, push it into Handoff sample
-                # meas_id = None
-                # rss = None
-                # for val in field.iter('field'):
-                #     if val.get('name') == 'lte-rrc.measId':
-                #         meas_id = val.get('show')
-                #     if val.get('name') == 'lte-rrc.rsrpResult':
-                #         rss = int(val.get('show')) - 140
 
                 meas_id = None
                 rss = None
-                neigh_cell_list = []
-                # neigh_cell_list = {}
-                p_rsrp = -200
-                p_rsrq = -1
+                # neigh_cell_list = []
+                neigh_cell_list = {}
+                p_rsrp = None
+                p_rsrq = None
                 for val in field.iter('field'):
                     if val.get('name') == 'lte-rrc.measId':
                         meas_id = val.get('show')
@@ -349,8 +380,8 @@ class MobilityMngt2(Analyzer):
                         for n_cell in val.iter('field'):
                             if n_cell.get('name') == 'lte-rrc.MeasResultEUTRA_element':
                                 n_cellid = -1
-                                n_rsrp = -200
-                                n_rsrq = -1
+                                n_rsrp = None
+                                n_rsrq = None
                                 # n_offset = -1
                                 # <field name="lte-rrc.rsrpResult" pos="14" show="28" showname="rsrpResult: -113dBm &lt;= RSRP &lt; -112dBm (28)" size="1" value="1c" />
                                 for rss_field in n_cell.iter('field'):
@@ -360,9 +391,10 @@ class MobilityMngt2(Analyzer):
                                         n_rsrp = int(rss_field.get('show')) - 140
                                     if rss_field.get('name') == 'lte-rrc.rsrqResult':
                                         n_rsrq = int(rss_field.get('show'))
-                                # neigh_cell_list[n_cellid] = (n_rsrp, n_rsrq)
+                                neigh_cell_list[n_cellid] = [n_rsrp, n_rsrq]
 
-                                neigh_cell_list.append([n_cellid, n_rsrp, n_rsrq])
+                                # neigh_cell_list.append([n_cellid, n_rsrp, n_rsrq])
+                                # neigh_cell_list.append([n_cellid, n_rsrp, n_rsrq])
 
 
                 if meas_id and self.__handoff_sample.cur_state:
@@ -403,9 +435,11 @@ class MobilityMngt2(Analyzer):
                         #               + "," + str(p_rsrp)
                         #               + "," + str(p_rsrq)
                         #               + "," + str(rss))
-                        for item in neigh_cell_list:
-                            if meas_report[1].event_list[0].type == 'a3' and item[0] in meas_report[0].cell_list:
-                                item.append(meas_report[0].cell_list[item[0]])
+
+                        # add cell offset
+                        for cell, item in neigh_cell_list.items():
+                            if meas_report[1].event_list[0].type == 'a3' and cell in meas_report[0].cell_list:
+                                item.append(meas_report[0].cell_list[cell])
                             else:
                                 item.append(0)
 
@@ -413,23 +447,28 @@ class MobilityMngt2(Analyzer):
                         if meas_report[0].freq == cur_freq and cur_cellid in meas_report[0].cell_list:
                             serv_offset = meas_report[0].cell_list[cur_cellid]
 
-                        print ("[rrc]:" + str(string2timestamp(log_item['timestamp'])) +
-                                      ",Measurement report," + str(cur_freq) + "," + str(cur_cellid) + "," +
-                                      str(p_rsrp) + "," + 
-                                      str(p_rsrq) + "," +
-                                      str(meas_report[1].event_list[0].type) + "," +
-                                      str(meas_report[1].time_to_trigger) + "," +
-                                      str(meas_report[0].freq) + "," +
-                                      # ",".join([str(x) for x in neigh_cell_list]) + "," +
-                                      ",".join(['%d %d %d %d'%(w,x,y,z) for w,x,y,z in neigh_cell_list]) + "," +
-                                      str(meas_report[1].hyst) + "," +
-                                      str(serv_offset) + "," +
-                                      str(meas_report[1].event_list[0].threshold1) + "," +
-                                      str(meas_report[1].event_list[0].threshold2) + "," +
-                                      str(msg_len))
+                        print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) +
+                                      ",Measurement report," + str(cur_freq) + "," + str(cur_cellid) + "," + str({"serving_rsrp":p_rsrp,"serving_rsrq":p_rsrq,"event_type":meas_report[1].event_list[0].type, "time_to_trigger":meas_report[1].time_to_trigger, "measure_freq":meas_report[0].freq, "hyst":meas_report[1].hyst,"serving_offset":serv_offset, "threshold1": meas_report[1].event_list[0].threshold1, "threshold2": meas_report[1].event_list[0].threshold2, "results":neigh_cell_list}))
+                        # print("[rrc]:" + str(string2timestamp(log_item['timestamp'])) +
+                        #               ",Measurement report," + str(cur_freq) + "," + str(cur_cellid) + "," +
+                        #               str() + "," + 
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               # ",".join([str(x) for x in neigh_cell_list]) + "," +
+                        #               ",".join(['%d %d %d %d'%(w,x,y,z) for w,x,y,z in neigh_cell_list]) + "," +
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               str() + "," +
+                        #               str(msg_len))
                 
-                print ("[rrc]:" + str(string2timestamp(log_item['timestamp'])) + ",serv rss," + str(cur_freq) + ',' + str(cur_cellid) + ',' + str(p_rsrp) + ',' + str(p_rsrq)) 
+                print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + ",Measurement serving," + str(cur_freq) + ',' + str(cur_cellid) + ',' + str(p_rsrp) + ',' + str(p_rsrq)) 
 
+                self.__current_freq = cur_freq
+                self.__current_cid = cur_cellid
+                self.__execution_failure = False
 
             if field.get('name') == "lte-rrc.measResultsCDMA2000_element":
 
@@ -527,7 +566,7 @@ class MobilityMngt2(Analyzer):
                             if meas_event.type == 'a3' and meas_event.threshold1 < 0:
                                 continue
 
-                            celloffset_str = ''
+                            celloffset = {}
                             self_offset = 0
                             if meas_event.type == 'a3':
                                 meas_obj_tmp = meas_state.measobj[obj_id]
@@ -536,17 +575,12 @@ class MobilityMngt2(Analyzer):
                                     if c == cur_cellid and meas_obj_tmp.freq == cur_freq:
                                         self_offset = meas_obj_tmp.cell_list[c]
                                     else:
-                                        # celloffset_str += str(c) + '.' + str(meas_event.threshold1 - meas_obj_tmp.cell_list[c]) + ' '
-                                        celloffset_str += str(c) + '.' + str(meas_obj_tmp.cell_list[c]) + ' '
-                                celloffset_str = celloffset_str.strip()
-                                # print celloffset_str
-                            # else:
-                            #     celloffset_str = str(meas_event.threshold1)
+                                        celloffset = meas_obj_tmp.cell_list[c]
 
-                            to_print_list.append(str(meas_state.measobj[obj_id].freq) + " " + str(meas_event.type) + " " + str(meas_event.threshold1) + " " + str(meas_event.threshold2) + " " + str(self_offset) + " " +  celloffset_str) 
+                            to_print_list.append({"freq":meas_state.measobj[obj_id].freq, "event_type":meas_event.type, "threshold1":meas_event.threshold1, "threshold2":meas_event.threshold2, "serving_offset":self_offset, "cell_offset":celloffset}) 
 
                 if to_print_list:        
-                    print ("[rrc]:" + str(string2timestamp(log_item['timestamp'])) + ",Meas Config," + str(cur_freq) + "," + str(cur_cellid) + "," + ','.join(to_print_list))
+                    print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + ",Meas Config," + str(cur_freq) + "," + str(cur_cellid) + "," + str({"info":to_print_list}))
 
                 # Generate a new state to the handoff sample
                 self.__handoff_sample.add_state_transition(meas_state)
@@ -563,6 +597,10 @@ class MobilityMngt2(Analyzer):
                 bcast_dict['Timestamp'] = str(log_item['timestamp'])
                 bcast_dict['Control info'] = meas_state.dump()
                 self.broadcast_info('MEAS_CTRL', bcast_dict)
+
+                self.__current_freq = cur_freq
+                self.__current_cid = cur_cellid
+                self.__execution_failure = False
 
     def __get_meas_obj(self, msg):
         """
@@ -1207,18 +1245,16 @@ class MobilityStateMachine:
     #             print item2.dump()
 
     def dump(self):
-        print "Handoff State Machine"
+        print("Handoff State Machine")
         for item in self.state_machine:
             for item2 in self.state_machine[item]:
                 meas_report = ""
                 for report in self.state_machine[item][item2].meas_report_queue:
                     meas_report = meas_report + \
                         "(" + str(report[0].freq) + "," + str(report[1].event_list[0].type) + ") "
-                print item.__class__.__name__ + "->" \
-                    + item2.__class__.__name__ + ": " \
-                    + meas_report
-                print "From State:\n", item.dump()
-                print "To State:\n", item2.dump()
+                print(item.__class__.__name__ + "->" + item2.__class__.__name__ + ": " + meas_report)
+                print("From State:\n", item.dump())
+                print("To State:\n", item2.dump())
 ############################################
 
 
