@@ -69,3 +69,7 @@ configs is a list of hash maps, each of which summarizes one measurement configu
 	- threshold2
 	- serving_offset
 	- cell_offset: a hash map from cell id to cell offset
+
+## References
+
+[1] Li, Yuanjie, Qianru Li, Zhehui Zhang, Ghufran Baig, Lili Qiu, and Songwu Lu. "Beyond 5g: Reliable extreme mobility management." In Proceedings of SIGCOMM 2020, pp. 344-358.
