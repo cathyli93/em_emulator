@@ -10,7 +10,7 @@ import logging
 from ast import literal_eval
 
 logger=logging.getLogger() 
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 consoleHandler = logging.StreamHandler(sys.stdout)
 # fileHandler = logging.FileHandler(PATH+'logfile.log')
@@ -89,10 +89,10 @@ def print_last_miss_cell(fields=[]):
 			last_miss_cell['targ_rsrq'] = rsrq
 			last_miss_cell['is_saved'] = res
 			last_miss_cell['1st_meas_time'] = time
-			logger.debug("[debug]" + file + "," + str(last_miss_cell["time"]) + ",handover-failure: missed-cell," + "," + str(res) + "," + str(last_miss_cell))
+			logger.info("[debug]" + file + "," + str(last_miss_cell["time"]) + ",handover-failure: missed-cell," + "," + str(res) + "," + str(last_miss_cell))
 	
-		else:
-			logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(last_miss_cell["time_before_disconnection"]) + "," + str(last_miss_cell["serv_freq"]) + "," + str(last_miss_cell["serv_cell"]) + "," + str(last_miss_cell["targ_freq"]) + "," + str(last_miss_cell['targ_cell']) + ",False")
+	else:
+		logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(last_miss_cell["time_before_disconnection"]) + "," + str(last_miss_cell["serv_freq"]) + "," + str(last_miss_cell["serv_cell"]) + "," + str(last_miss_cell["targ_freq"]) + "," + str(last_miss_cell['targ_cell']) + ",False")
 
 	last_miss_cell.clear()
 
@@ -165,6 +165,7 @@ def process_rrc_ota(msg):
 			intra_offset = None
 
 	if tag == 'Handover failure':
+		logger.info("[warning]" + file + "," + "handover-failure" + "," + str(headers))
 		print_last_miss_cell()
 
 		freq = int(headers[2])
@@ -217,29 +218,27 @@ def process_rrc_ota(msg):
 
 			logger.debug("[debug]" + file + "," + str(time) + ",handover-failure: loss," + "," + str(last_same_report["is_saved"]) + "," + str(last_same_report))
 
-		else:
-						# no_meas += 1
-			if last_diff_report:
-				report_list = last_diff_report['targets']
-				report_str = ','.join(['%s,%s,%s'%(str(x), str(report_list[x][0]), str(report_list[x][1])) for x in report_list])
-				last_diff_report['targets'] = report_str
+		elif last_diff_report:
+			report_list = last_diff_report['targets']
+			report_str = ','.join(['%s,%s,%s'%(str(x), str(report_list[x][0]), str(report_list[x][1])) for x in report_list])
+			last_diff_report['targets'] = report_str
 
-				logger.info(file + "," + str(time) + ",handover-failure: loss," + str(headers[4]) + "," + str(last_diff_report["serv_freq"]) + "," + str(last_diff_report["serv_cell"]) + "," + str(freq) + "," + str(cellid) + "," + str(last_diff_report["is_saved"]))
-				logger.debug("[debug]" + file + "," + str(time) + ",handover-failure: loss," + "," + str(last_diff_report["is_saved"]) + ","  + str(last_diff_report))
+			logger.info(file + "," + str(time) + ",handover-failure: loss," + str(headers[4]) + "," + str(last_diff_report["serv_freq"]) + "," + str(last_diff_report["serv_cell"]) + "," + str(freq) + "," + str(cellid) + "," + str(last_diff_report["is_saved"]))
+			logger.debug("[debug]" + file + "," + str(time) + ",handover-failure: loss," + "," + str(last_diff_report["is_saved"]) + ","  + str(last_diff_report))
+
+		else:
+			inter_meas_type = ''
+			if cur_freq != freq:
+				inter_meas_type = 'Not configured'
+				if freq in inter_meas_config:
+					inter_meas_type = inter_meas_config[freq]
+
+			if inter_meas_type == 'Not configured':
+				last_miss_cell = {'time':time,'serv_freq':cur_freq,'serv_cell':cur_cell,'serv_rsrp':cur_rss[0],'serv_rsrq':cur_rss[1],'targ_freq':freq,'targ_cell':cellid,'offset':intra_offset,"time_before_disconnection":float(headers[4])}
+				logger.debug("[debug]" + str(last_miss_cell))
 
 			else:
-				inter_meas_type = ''
-				if cur_freq != freq:
-					inter_meas_type = 'Not configured'
-					if freq in inter_meas_config:
-						inter_meas_type = inter_meas_config[freq]
-
-				if inter_meas_type == 'Not configured':
-					last_miss_cell = {'time':time,'serv_freq':cur_freq,'serv_cell':cur_cell,'serv_rsrp':cur_rss[0],'serv_rsrq':cur_rss[1],'targ_freq':freq,'targ_cell':cellid,'offset':intra_offset,"time_before_disconnection":float(headers[4])}
-					logger.debug("[debug]" + str(last_miss_cell))
-
-				else:
-					logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(headers[4]) + "," + str(cur_freq) + "," + str(cur_cell) + "," + str(freq) + "," + str(cellid) + ",False")
+				logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(headers[4]) + "," + str(cur_freq) + "," + str(cur_cell) + "," + str(freq) + "," + str(cellid) + ",False")
 					# print("[debug]" + file + "," + str(time) + ",handover-failure: coverage hole,")
 					# print_last_miss_cell()
 					# last_miss_cell.clear()
@@ -268,7 +267,9 @@ def process_rrc_ota(msg):
 
 	# [rrc]:1565519752.6,ConnectionSetup,2452,139
 	if tag == 'Connection setup':
-		print_last_miss_cell()
+		if not (last_miss_cell and cur_freq == int(headers[2]) and cur_cell == int(headers[3])):
+			print_last_miss_cell()
+			intra_offset = None
 
 		cur_freq = int(headers[2])
 		cur_cell = int(headers[3])
@@ -276,12 +277,12 @@ def process_rrc_ota(msg):
 		inter_meas_config = {}
 
 		cur_rss = [None, None]
-		intra_offset = None
 
 	# [rrc]:1564507109.41,Meas Config,1825,161,1825 a3 1 None 0 148.1 180.1 159.1
 	if tag == 'Meas Config':
-		inter_meas_config.clear()
-		# info = 
+		# print_last_miss_cell()
+
+		inter_meas_config.clear() 
 		for item in info["info"]:
 			freq = item["freq"]
 			if freq == int(headers[2]):
