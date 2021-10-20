@@ -3,8 +3,8 @@
 ## Dataset description:
 ### Intermediate mobility logs 
 The logs include RRC OTA traces of the following types and formats:
-- ``Connection setup`` rrc-ota:<timestamp>,Connection setup,<new_cell_freq>,<new_cell_id>
-- ``Handover failure`` rrc-ota:<timestamp>,Handover failure,<new_cell_freq>,<new_cell_id>,<timestamp_of_losing_old_connection>
+- ``Connection setup`` rrc-ota:<unix_time>,Connection setup,<new_cell_freq>,<new_cell_id>
+- ``Handover failure`` rrc-ota:<unix_time>,Handover failure,<new_cell_freq>,<new_cell_id>,<timestamp_of_losing_old_connection>
 - ``Handover`` rrc-ota:<timestamp>,Handover,<source_cell_freq>,<source_cell_id>,<target_cell_freq>,<target_cell_id>,<timestamp_when_handover_started>
 - ``Measurement report`` rrc-ota:<timestamp>,Measurement report,<current_cell_freq>,<current_cell_id>,<report_content>
 	- report_content is a Hash map (dictionary in Python) with the following keys:
