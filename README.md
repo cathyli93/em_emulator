@@ -18,9 +18,9 @@ The logs include RRC OTA traces of the following types and formats:
     - hyst
 	- serving_offset
 	- measure_freq
-	- results: a hash map from cell id to signal strengths; <cell_id>:[<rsrp>,<rsrq>,<cell_offset>]
-- ``Measurement serving`` rrc-ota:<unix_time>,Measurement serving,<current_cell_freq>,<current_cell_id>,<rsrp>,<rsrq>
-- ``Meas Config`` rrc-ota:<unix_time>,Meas Config,<current_cell_freq>,<current_cell_id>,<configs>
+	- results: a hash map from cell id to signal strengths; <cell_id>:[\<rsrp\>,\<rsrq\>,<cell_offset>]
+- ``Measurement serving`` rrc-ota:<unix_time>,Measurement serving,<current_cell_freq>,<current_cell_id>,\<rsrp\>,\<rsrq\>
+- ``Meas Config`` rrc-ota:<unix_time>,Meas Config,<current_cell_freq>,<current_cell_id>,\<configs\>
 	- configs is a list of hash maps, each of which summarizes one measurement configuration with the following keys:
 	- freq
 	- event_type
