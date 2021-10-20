@@ -17,7 +17,7 @@ python /path/to/repo/src/handoff_failure.py /path/to/intermediate/log/folder > m
 We generate mobility logs for a fine-grained high-speed railway dataset [1].
 There are two types of logs:
 - [Mobility profile](https://github.com/cathyli93/rem_private/blob/main/dataset/hsr_profile.log): the profile of mobility events
-- [Intermediate mobility traces](https://github.com/cathyli93/rem_private/blob/main/dataset/): more details in plain text for deeper analysis
+- [Intermediate mobility traces](https://www.dropbox.com/sh/naq2efo6s9ylwgj/AABnxzR-QfASMMKNjiakgLmAa?dl=0): more details in plain text for deeper analysis
 
 ### Mobility profiles
 The profile logs describe mobility events of successful/failed handovers. We record the following information for each event:
