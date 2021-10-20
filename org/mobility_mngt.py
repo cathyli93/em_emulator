@@ -27,6 +27,9 @@ import datetime
 
 
 def string2timestamp(s):
+    if s is None:
+        return None
+
     # dt=datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S.%f")
     # return time.mktime(dt.timetuple()) + (dt.microsecond / 1000000.0)
     seconds = "%.6f"%(time.mktime(s.timetuple()) + s.microsecond / 1000000.0)
@@ -65,7 +68,7 @@ class MobilityMngt3(Analyzer):
         self.__predict_target = None  # predicted target cell
 
         # mobility profile
-        self.__execution_failure = False
+        # self.__execution_failure = False
 
         self.__current_freq = None
         self.__current_cid = None
@@ -105,10 +108,14 @@ class MobilityMngt3(Analyzer):
 
     def __serv_cell_meas(self, decoded):
         for element in decoded['Subpackets']:
-            if element['Serving Cell Index'] == 'PCell' and element['Is Serving Cell'] == 1 and element['E-ARFCN'] == self.__current_freq and element['Physical Cell ID'] == self.__current_cid:
-                self.__last_measure = decoded['timestamp']
-                break
-            # self.__last_measure = (log_item['timestamp'], log_item['E-ARFCN'], log_item['Physical Cell ID'])
+            if element['Serving Cell Index'] == 'PCell' and element['Is Serving Cell'] == 1:
+                if self.__current_freq is None:
+                    self.__current_freq = element['E-ARFCN']
+                    self.__current_cid = element['Physical Cell ID']
+                    break
+                if element['E-ARFCN'] == self.__current_freq and element['Physical Cell ID'] == self.__current_cid:
+                    self.__last_measure = decoded['timestamp']
+                    break
 
     def print_mobility_policy(self):
         """
@@ -185,7 +192,7 @@ class MobilityMngt3(Analyzer):
                 self.__handoff_sample = HandoffSample()
                 self.__current_freq = cur_freq
                 self.__current_cid = cur_cellid
-                self.__execution_failure = False
+                # self.__execution_failure = False
                 self.__handover_ongoing = None
 
                 print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
@@ -195,23 +202,35 @@ class MobilityMngt3(Analyzer):
                 # <field name="lte-rrc.reestablishmentCause" pos="13" show="1" showname="reestablishmentCause: handoverFailure (1)" size="1" value="04" />
                 self.__handoff_sample = HandoffSample()
 
+                tag = 'Handover failure'
+                if self.__current_freq == cur_freq and self.__current_cid == cur_cellid:
+                    tag = 'Reestablish'
+
                 for val in field.iter('field'):
                     if val.get('name') == 'lte-rrc.reestablishmentCause':
                         if int(val.get('show')) == 1:
-                            self.__execution_failure = True
+                            # self.__execution_failure = True
+                            tag = 'Reestablish'
                         break
 
-            if field.get("name") == "lte-rrc.rrcConnectionReestablishmentComplete_element":
-                tag = 'Handover failure'
-                if self.__execution_failure:
-                    tag = 'Reestablish'
-                print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
-                              "," + tag + "," + str(cur_freq) + "," + str(cur_cellid) + "," + str(string2timestamp(self.__last_measure)))
+                print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + "," + tag + "," + str(cur_freq) + "," + str(cur_cellid) + "," + str(string2timestamp(self.__last_measure)))
 
                 self.__current_freq = cur_freq
                 self.__current_cid = cur_cellid
-                self.__execution_failure = False
+                # self.__execution_failure = False
                 self.__handover_ongoing = None
+
+            # if field.get("name") == "lte-rrc.rrcConnectionReestablishmentComplete_element":
+            #     tag = 'Handover failure'
+            #     if self.__execution_failure:
+            #         tag = 'Reestablish'
+            #     print("rrc-ota:" + str(string2timestamp(log_item['timestamp'])) + 
+            #                   "," + tag + "," + str(cur_freq) + "," + str(cur_cellid) + "," + str(string2timestamp(self.__last_measure)))
+
+            #     self.__current_freq = cur_freq
+            #     self.__current_cid = cur_cellid
+            #     self.__execution_failure = False
+            #     self.__handover_ongoing = None
 
             if field.get("name") == "lte-rrc.rrcConnectionReconfigurationComplete_element":
                 if self.__handover_ongoing:
@@ -220,7 +239,7 @@ class MobilityMngt3(Analyzer):
 
                 self.__current_freq = cur_freq
                 self.__current_cid = cur_cellid
-                self.__execution_failure = False
+                # self.__execution_failure = False
                 self.__handover_ongoing = None
 
             if field.get('name') == "lte-rrc.mobilityControlInfo_element":
@@ -468,7 +487,7 @@ class MobilityMngt3(Analyzer):
 
                 self.__current_freq = cur_freq
                 self.__current_cid = cur_cellid
-                self.__execution_failure = False
+                # self.__execution_failure = False
 
             if field.get('name') == "lte-rrc.measResultsCDMA2000_element":
 
@@ -600,7 +619,7 @@ class MobilityMngt3(Analyzer):
 
                 self.__current_freq = cur_freq
                 self.__current_cid = cur_cellid
-                self.__execution_failure = False
+                # self.__execution_failure = False
 
     def __get_meas_obj(self, msg):
         """

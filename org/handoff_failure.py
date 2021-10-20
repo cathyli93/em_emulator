@@ -1,25 +1,40 @@
 #!/usr/bin/python
 # Filename: handoff_failure.py
+# Author: Qianru Li
 
-import sys
+import os, sys
 import traceback
 import random
+import logging
 
 from ast import literal_eval
+
+logger=logging.getLogger() 
+logger.setLevel(logging.DEBUG)
+
+consoleHandler = logging.StreamHandler(sys.stdout)
+# fileHandler = logging.FileHandler(PATH+'logfile.log')
+consoleHandler.setLevel(logging.INFO) 
+
+logger.addHandler(consoleHandler)
+
+file = ''
 
 meas_report_stack = []
 inter_meas_config = {}
 
-total_failure = 0
-inter_failure = 0
-intra_failure = 0
-no_meas = 0
-with_meas = 0
+# total_failure = 0
+# inter_failure = 0
+# intra_failure = 0
+# no_meas = 0
+# with_meas = 0
 
 cur_freq = None
 cur_cell = None
 
-file = ''
+intra_offset = None
+last_miss_cell = {}
+cur_rss = [None, None]
 
 rsrq_to_snr = [-17.1,-18.2,-17,-16.6,-16.8,-16.4,-15.4,-14.6,-13.7,-12.4,-11.1,-9.9,-8.5,-7,-5.5,-3.8,-2.2,-0.5,1.7,3.5,5.3,6.3,7.5,9,10.4,10.8,10.6,11.1]
 
@@ -27,10 +42,7 @@ def get_saved_result(rsrq):
 	global rsrq_to_snr
 
 	try:
-
 		if rsrq == 0:
-		# if random.random() < 0.444:
-		# 	return (-13.7,True)
 			return (None,False)
 
 		real_rsrq = int((rsrq + 1)/2 - 20)
@@ -39,15 +51,54 @@ def get_saved_result(rsrq):
 			est_snr = rsrq_to_snr[real_rsrq+30]
 		if est_snr >= -14 and real_rsrq < -3:
 			return (est_snr,True)
-
 		return (est_snr,False)
 	except:
 		print("Error:",rsrq)
 		return(rsrq_to_snr[0], False)
 
+def print_last_miss_cell(fields=[]):
+	global last_miss_cell
+
+	allowed_gap = 0.5
+
+	if not last_miss_cell:
+		return
+
+	# res = 'Not decided'
+	rsrp = None
+	rsrq = None
+	time = None
+	if fields:
+		time = float(fields[0])
+		freq = int(fields[2])
+		cell = int(fields[3])
+		rsrp = int(fields[4])
+		rsrq = int(fields[5])
+
+		# missed cells: not measured but available within the gap
+		if fields and freq==last_miss_cell['targ_freq'] and cell==last_miss_cell['targ_cell'] and time - last_miss_cell['time'] < allowed_gap:
+			res = False
+			# can be judged based on existing information
+			if last_miss_cell['serv_rsrp'] is not None and last_miss_cell['offset'] is not None:
+				if rsrp > last_miss_cell['serv_rsrp'] + last_miss_cell['offset']:
+					res = True
+
+			logger.info(file + "," + str(last_miss_cell["time"]) + ",handover-failure: missed-cell," + str(last_miss_cell["time_before_disconnection"]) + "," + str(last_miss_cell["serv_freq"]) + "," + str(last_miss_cell["serv_cell"]) + "," + str(last_miss_cell["targ_freq"]) + "," + str(last_miss_cell['targ_cell']) + "," + str(res))
+			
+			last_miss_cell['targ_rsrp'] = rsrp
+			last_miss_cell['targ_rsrq'] = rsrq
+			last_miss_cell['is_saved'] = res
+			last_miss_cell['1st_meas_time'] = time
+			logger.debug("[debug]" + file + "," + str(last_miss_cell["time"]) + ",handover-failure: missed-cell," + "," + str(res) + "," + str(last_miss_cell))
+	
+		else:
+			logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(last_miss_cell["time_before_disconnection"]) + "," + str(last_miss_cell["serv_freq"]) + "," + str(last_miss_cell["serv_cell"]) + "," + str(last_miss_cell["targ_freq"]) + "," + str(last_miss_cell['targ_cell']) + ",False")
+
+	last_miss_cell.clear()
+
 def process_rrc_ota(msg):
 	# type_id = type_id.strip()
-	global meas_report_stack, inter_meas_config, cur_freq, cur_cell, file
+	global meas_report_stack, inter_meas_config, cur_freq, cur_cell, file, cur_rss, intra_offset, last_miss_cell
 
 	meta = msg
 	info = {}
@@ -57,7 +108,7 @@ def process_rrc_ota(msg):
 		meta = msg[:info_start]
 		info = literal_eval(msg[info_start:info_end+1])
 
-	headers = meta.strip(',').split(',')
+	headers = meta.strip().strip(',').split(',')
 	time = float(headers[0])
 
 	tag = headers[1]
@@ -67,21 +118,32 @@ def process_rrc_ota(msg):
 	# 	cur_freq = int(fields[2])
 	# 	cur_cell = int(fields[3])
 
+	if tag == "Measurement serving":
+		print_last_miss_cell(headers)
+
+		cur_rss[0] = int(headers[4])
+		cur_rss[1] = int(headers[5])
+		cur_freq = int(headers[2])
+		cur_cell = int(headers[3])
+
 	if tag == 'Measurement report':
-		# filter measurements for monitoring
+		print_last_miss_cell()
+
 		if info['event_type'] not in ['a3', 'a4', 'a5']:
 			return
 
 		if info['event_type'] == 'a3' and info['threshold1'] < 0:
 			return
 
-					# if fields[6] == 'a5' and int(fields[-3]) - int(fields[-2]) >= 30:
-					# 	continue
-
 		info['time'] = time 
 		info['freq'] = int(headers[2])
 		info['cid'] = int(headers[3])
 		meas_report_stack.append(info)
+
+		cur_freq = int(headers[2])
+		cur_cell = int(headers[3])
+		cur_rss[0] = info['serving_rsrp']
+		cur_rss[1] = info['serving_rsrq']
 			
 		# meas_report_stack.append({'time':float(time), 'freq':int(fields[2]), 'type':fields[6], 'meas_freq':int(fields[8]), 'neighbor':n_cells, 'rsrp':int(fields[4]), 'rsrq':int(fields[5]), 'ttt':int(fields[7]), 'thresh1':int(fields[-3]), 'thresh2':'None' if fields[-2] == 'None' else int(fields[-2])})
 
@@ -89,6 +151,8 @@ def process_rrc_ota(msg):
 
 	# [rrc]:1565527724.94,Reestablish with,1825,244,handover_failure
 	if tag == "Reestablish":
+		print_last_miss_cell()
+
 		freq = int(headers[2])
 		cellid = int(headers[3])
 		if freq == cur_freq and cellid == cur_cell:
@@ -97,7 +161,12 @@ def process_rrc_ota(msg):
 			meas_report_stack = []
 			inter_meas_config = {}
 
+			cur_rss = [None, None]
+			intra_offset = None
+
 	if tag == 'Handover failure':
+		print_last_miss_cell()
+
 		freq = int(headers[2])
 		cellid = int(headers[3])
 
@@ -144,20 +213,19 @@ def process_rrc_ota(msg):
 					'is_saved':saved}
 
 		if last_same_report:
-			print(file + "," + str(time) + ",handover failure: loss," + "[disruption]" + "," + str(last_same_report["is_saved"]) + "," + str(last_same_report))
+			logger.info(file + "," + str(time) + ",handover-failure: loss," + str(headers[4]) + "," + str(last_same_report["serv_freq"]) + "," + str(last_same_report["serv_cell"]) + "," + str(freq) + "," + str(cellid) + "," + str(last_same_report["is_saved"]))
+
+			logger.debug("[debug]" + file + "," + str(time) + ",handover-failure: loss," + "," + str(last_same_report["is_saved"]) + "," + str(last_same_report))
 
 		else:
 						# no_meas += 1
 			if last_diff_report:
-							# if not last_diff_report['thresh2']:
-							# 	last_diff_report['thresh2'] = 'None'
 				report_list = last_diff_report['targets']
 				report_str = ','.join(['%s,%s,%s'%(str(x), str(report_list[x][0]), str(report_list[x][1])) for x in report_list])
 				last_diff_report['targets'] = report_str
 
-				print(file + "," + str(time) + ",handover failure: loss," + "[disruption]" + "," + str(last_diff_report["is_saved"]) + "," + str(last_diff_report))
-
-				# print(file + ',re-est with diff report,' + str(time) + ',' + ','.join(['%s,%s'%(x, str(last_diff_report[x])) for x in sorted(last_diff_report.keys())]))
+				logger.info(file + "," + str(time) + ",handover-failure: loss," + str(headers[4]) + "," + str(last_diff_report["serv_freq"]) + "," + str(last_diff_report["serv_cell"]) + "," + str(freq) + "," + str(cellid) + "," + str(last_diff_report["is_saved"]))
+				logger.debug("[debug]" + file + "," + str(time) + ",handover-failure: loss," + "," + str(last_diff_report["is_saved"]) + ","  + str(last_diff_report))
 
 			else:
 				inter_meas_type = ''
@@ -165,43 +233,50 @@ def process_rrc_ota(msg):
 					inter_meas_type = 'Not configured'
 					if freq in inter_meas_config:
 						inter_meas_type = inter_meas_config[freq]
-								
-				print(file + ',re-est without report,serv_freq,' + str(cur_freq) + ',targ_freq,' + str(freq) + ',targ_cell,' + str(cellid) + ',' + inter_meas_type)
-							
-							# print file + ',re-est with non-reported cell,' + str(time) + ',' + str(cur_freq) + ',' + str(cur_cell) + ',' + str(freq) + ',' + str(cellid)
-							 # is_configured_inter_freq
 
+				if inter_meas_type == 'Not configured':
+					last_miss_cell = {'time':time,'serv_freq':cur_freq,'serv_cell':cur_cell,'serv_rsrp':cur_rss[0],'serv_rsrq':cur_rss[1],'targ_freq':freq,'targ_cell':cellid,'offset':intra_offset,"time_before_disconnection":float(headers[4])}
+					logger.debug("[debug]" + str(last_miss_cell))
+
+				else:
+					logger.info(file + "," + str(time) + ",handover-failure: coverage hole," + str(headers[4]) + "," + str(cur_freq) + "," + str(cur_cell) + "," + str(freq) + "," + str(cellid) + ",False")
+					# print("[debug]" + file + "," + str(time) + ",handover-failure: coverage hole,")
+					# print_last_miss_cell()
+					# last_miss_cell.clear()
 
 		inter_meas_config = {}
 		meas_report_stack = []
 		cur_freq = freq
 		cur_cell = cellid
-		# total_failure += 1
+
+		cur_rss = [None, None]
+		intra_offset = None
 					
 	# [rrc]:1564509145.58,Handoff,1850,123,1850,187,91
 	if tag == 'Handover':
+		print_last_miss_cell()
+
+		logger.info(file + "," + str(time) + ",handover," + str(headers[6]) + "," + str(cur_freq) + "," + str(cur_cell) + "," + str(headers[4]) + "," + str(headers[5]))
+
 		cur_freq = int(headers[4])
 		cur_cell = int(headers[5])
 		meas_report_stack = []
 		inter_meas_config = {}
 
+		cur_rss = [None, None]
+		intra_offset = None
+
 	# [rrc]:1565519752.6,ConnectionSetup,2452,139
 	if tag == 'Connection setup':
+		print_last_miss_cell()
+
 		cur_freq = int(headers[2])
 		cur_cell = int(headers[3])
 		meas_report_stack = []
 		inter_meas_config = {}
 
-	# 			# [rrc]:1565519742.57,ConnectionRelease
-	# if tag == 'ConnectionRelease':
-	# 	meas_report_stack = []
-	# 	inter_meas_config = {}
-	# 				# print cur_freq, cur_cell
-
-	# 			# [rrc]:1565519758.24,Reconfig complete,1825,6
-	# if tag == 'Reconfig complete':
-	# 	cur_freq = int(fields[-2])
-	# 	cur_cell = int(fields[-1])
+		cur_rss = [None, None]
+		intra_offset = None
 
 	# [rrc]:1564507109.41,Meas Config,1825,161,1825 a3 1 None 0 148.1 180.1 159.1
 	if tag == 'Meas Config':
@@ -210,6 +285,8 @@ def process_rrc_ota(msg):
 		for item in info["info"]:
 			freq = item["freq"]
 			if freq == int(headers[2]):
+				if item["event_type"] == "a3":
+					intra_offset = item["threshold1"]
 				continue
 
 			if item["event_type"] == 'a3' and item["threshold1"] < 0:
@@ -217,35 +294,30 @@ def process_rrc_ota(msg):
 
 			inter_meas_config[freq] = item["event_type"]
 
-						# thresh2 = int(fields[i+3]) if fields[i+1] == 'a5' else None
-						# inter_meas_config[inter_freq] = (fields[i+1], int(fields[i+2]), thresh2)
 
 if __name__ == '__main__':
-	# fout1 = open(sys.argv[2], 'a+')
-	# fout2 = open(sys.argv[3], 'a+')
-	file = sys.argv[1]
-	with open(sys.argv[1], 'r') as f:
-		for line in f:
-			try:
-				type_id = line.split(':')[0]
-				if type_id == "rrc-ota":
-					process_rrc_ota(line[8:])
 
-				# if type_id != 'rrc-ota':
-				# 	if type_id[-3:] == 'txt':
-				# 		file = type_id
-				# 	continue
+	files_to_process = []
+	for root, dirs, files in os.walk(sys.argv[1]):
+		for f in files:
+			if f.endswith(".mi2log.txt") or f.endswith(".qmdl.txt"):
+				# if f >= "mobility_diag_log_20190811_1101211565492481444.mi2log.txt" and f <= 
+				path = os.path.abspath(os.path.join(root, f))
+				files_to_process.append(path)
 
-			except:
-				print("Unexpected error:", sys.exc_info()[0], file, line, traceback.format_exc())
-				continue
+	files_to_process.sort()
+	for f in files_to_process:
+		file = f
 
-			# except IndexError as e:
-			# 	print file, fields, traceback.format_exc()
-			# 	continue
+		with open(f, 'r') as lines:
+			for line in lines:
+				try:
+					type_id = line.split(':')[0]
+					if type_id == "rrc-ota":
+						process_rrc_ota(line[8:])
 
-	# print sys.argv[1], total_failure, with_meas, no_meas, intra_failure, inter_failure
-	# fout2.write(','.join([sys.argv[1], str(total_failure), str(with_meas), str(no_meas), str(intra_failure), str(inter_failure)]) + '\n')
+				except:
+					print("Unexpected error:", sys.exc_info()[0], file, line, traceback.format_exc())
+					continue
 
-	# fout1.close()
-	# fout2.close()
+			print_last_miss_cell()
