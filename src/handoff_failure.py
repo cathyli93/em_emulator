@@ -356,7 +356,7 @@ if __name__ == '__main__':
 
 	files_to_process.sort()
 	for f in files_to_process:
-		file = f
+		file = os.path.basename(f)
 
 		with open(f, 'r') as lines:
 			for line in lines:
