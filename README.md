@@ -1,6 +1,4 @@
-# rem_private
-
-## Mobility Emulator
+# Extreme Mobility Emulator
 
 The emulator extracts real events mobility management from wireless network datasets.
 It helps demonstrate the impact of (un)reliable mobility management on real applications, by replaying those events on cellular network testbeds (like [Flora](http://metro.cs.ucla.edu/flora.html)).
@@ -8,7 +6,7 @@ In particular, it is useful for analysis under extreme mobility (e.g. high-speed
 With the emulator, researchers and developers can emulate extreme mobility conditions based on public datasets or replay data collected by themselves.
 In addition, the emulator also considers mitigation of unreliable mobility management based on solutions like REM [1].
 
-### Architecture
+## Architecture
 ![Emulator architecture](./fig/architecture.png)
 As the figure illustrates, the emulator consists of a raw log parser and mobility event analyzers.
 - Raw log parser: Parse RRC/measurement logs to generate readable, normalized logs with full details of handovers
@@ -16,14 +14,14 @@ As the figure illustrates, the emulator consists of a raw log parser and mobilit
     - Handover failure. For each failure, calculate the disruption time, diagnose the failure cause and evaluate if REM can avoid it.
     - Handover success. For each instance, calculate the disruption time.
 
-### Usage
-#### Raw log parser
+## Usage
+### Raw log parser
 Enter the folder to hold intermediate logs; Run the command below to parse all raw mobile logs under /path/to/raw/log/folder.
 ```
 sh /path/to/repo/src/batch_monitor.sh /path/to/raw/log/folder
 ```
 
-#### Mobility analyzer
+### Mobility analyzer
 Read in intermediate logs generated in the previous steps and generate a profile including all mobility events.
 ```
 python /path/to/repo/src/handoff_failure.py /path/to/intermediate/log/folder > mobility_profile.log
